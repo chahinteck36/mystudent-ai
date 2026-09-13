@@ -1,0 +1,6 @@
+{
+  "name": "StudyMate AI",
+  "description": "Your AI Study Partner – Academic assistant for problem solving, AI tutor, smart summaries, flashcards, and quizzes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

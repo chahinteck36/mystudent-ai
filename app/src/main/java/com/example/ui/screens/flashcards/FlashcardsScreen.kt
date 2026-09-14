@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -77,6 +78,7 @@ fun FlashcardsScreen(
     decks: List<FlashcardDeckEntity>,
     selectedDeck: FlashcardDeckEntity?,
     isCreatingDeck: Boolean,
+    deckError: String? = null,
     onSelectDeck: (FlashcardDeckEntity?) -> Unit,
     onCreateDeck: (title: String, subject: String, content: String, count: Int) -> Unit,
     onUpdateDeck: (deckId: Long, updatedJson: String, masteredCount: Int) -> Unit,
@@ -135,6 +137,26 @@ fun FlashcardsScreen(
                 }
             }
 
+            if (deckError != null) {
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                            .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = deckError,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+
             if (decks.isEmpty()) {
                 item {
                     Text(
@@ -160,6 +182,7 @@ fun FlashcardsScreen(
     if (showCreateDialog) {
         CreateDeckDialog(
             isCreating = isCreatingDeck,
+            deckError = deckError,
             onDismiss = { showCreateDialog = false },
             onCreate = { title, subject, content, count ->
                 onCreateDeck(title, subject, content, count)
@@ -548,6 +571,7 @@ private fun FlashcardStudyView(
 @Composable
 private fun CreateDeckDialog(
     isCreating: Boolean,
+    deckError: String? = null,
     onDismiss: () -> Unit,
     onCreate: (title: String, subject: String, content: String, count: Int) -> Unit
 ) {
@@ -580,6 +604,14 @@ private fun CreateDeckDialog(
                     placeholder = { Text("Paste lesson text, key concepts, or topic description...") },
                     modifier = Modifier.fillMaxWidth().height(100.dp).testTag("input_deck_content")
                 )
+
+                if (deckError != null) {
+                    Text(
+                        text = deckError,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
         },
         confirmButton = {

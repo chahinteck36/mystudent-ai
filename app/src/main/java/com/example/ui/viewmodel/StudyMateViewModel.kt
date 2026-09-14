@@ -26,11 +26,22 @@ class StudyMateViewModel(
 ) : ViewModel() {
 
     // Current Navigation Screen
-    private val _currentRoute = MutableStateFlow("dashboard")
+    private val _currentRoute = MutableStateFlow(
+        if (com.google.firebase.auth.FirebaseAuth.getInstance().currentUser != null) "dashboard" else "landing"
+    )
     val currentRoute: StateFlow<String> = _currentRoute.asStateFlow()
 
     fun navigateTo(route: String) {
         _currentRoute.value = route
+    }
+
+    fun signOut() {
+        try {
+            com.google.firebase.auth.FirebaseAuth.getInstance().signOut()
+        } catch (e: Exception) {
+            // ignore
+        }
+        _currentRoute.value = "auth"
     }
 
     // User Profile
@@ -132,17 +143,23 @@ class StudyMateViewModel(
     private val _isSummarizing = MutableStateFlow(false)
     val isSummarizing: StateFlow<Boolean> = _isSummarizing.asStateFlow()
 
+    private val _summaryError = MutableStateFlow<String?>(null)
+    val summaryError: StateFlow<String?> = _summaryError.asStateFlow()
+
     private val _selectedSummary = MutableStateFlow<LessonSummaryEntity?>(null)
     val selectedSummary: StateFlow<LessonSummaryEntity?> = _selectedSummary.asStateFlow()
 
     fun generateSummary(title: String, subject: String, text: String, length: String) {
         if (text.isBlank()) return
         _isSummarizing.value = true
+        _summaryError.value = null
         viewModelScope.launch {
             val res = repository.generateAndSaveSummary(title, subject, text, length)
             _isSummarizing.value = false
             if (res.isSuccess) {
                 _selectedSummary.value = res.getOrNull()
+            } else {
+                _summaryError.value = res.exceptionOrNull()?.localizedMessage ?: "Failed to generate summary"
             }
         }
     }
@@ -166,6 +183,9 @@ class StudyMateViewModel(
     private val _isCreatingDeck = MutableStateFlow(false)
     val isCreatingDeck: StateFlow<Boolean> = _isCreatingDeck.asStateFlow()
 
+    private val _deckError = MutableStateFlow<String?>(null)
+    val deckError: StateFlow<String?> = _deckError.asStateFlow()
+
     fun selectDeck(deck: FlashcardDeckEntity?) {
         _selectedDeck.value = deck
     }
@@ -173,11 +193,14 @@ class StudyMateViewModel(
     fun createDeckFromContent(title: String, subject: String, content: String, count: Int = 5) {
         if (title.isBlank() || content.isBlank()) return
         _isCreatingDeck.value = true
+        _deckError.value = null
         viewModelScope.launch {
             val res = repository.createDeckFromAI(title, subject, content, count)
             _isCreatingDeck.value = false
             if (res.isSuccess) {
                 _selectedDeck.value = res.getOrNull()
+            } else {
+                _deckError.value = res.exceptionOrNull()?.localizedMessage ?: "Failed to create flashcards"
             }
         }
     }
@@ -202,13 +225,19 @@ class StudyMateViewModel(
     private val _isGeneratingQuiz = MutableStateFlow(false)
     val isGeneratingQuiz: StateFlow<Boolean> = _isGeneratingQuiz.asStateFlow()
 
+    private val _quizError = MutableStateFlow<String?>(null)
+    val quizError: StateFlow<String?> = _quizError.asStateFlow()
+
     fun generateQuiz(subject: String, topic: String, count: Int, difficulty: String, type: String) {
         _isGeneratingQuiz.value = true
+        _quizError.value = null
         viewModelScope.launch {
             val res = repository.generateQuiz(subject, topic, count, difficulty, type)
             _isGeneratingQuiz.value = false
             if (res.isSuccess) {
                 _activeQuiz.value = res.getOrNull()
+            } else {
+                _quizError.value = res.exceptionOrNull()?.localizedMessage ?: "Failed to generate quiz"
             }
         }
     }
@@ -243,12 +272,16 @@ class StudyMateViewModel(
     private val _isAnalyzingLecture = MutableStateFlow(false)
     val isAnalyzingLecture: StateFlow<Boolean> = _isAnalyzingLecture.asStateFlow()
 
+    private val _lectureError = MutableStateFlow<String?>(null)
+    val lectureError: StateFlow<String?> = _lectureError.asStateFlow()
+
     private var recordingTimerJob: Job? = null
 
     fun startLectureRecording() {
         _isRecording.value = true
         _isRecordingPaused.value = false
         _recordingDuration.value = 0
+        _lectureError.value = null
         startTimer()
     }
 
@@ -272,22 +305,31 @@ class StudyMateViewModel(
         }
     }
 
-    fun stopAndAnalyzeLecture(title: String, subject: String) {
+    fun stopAndAnalyzeLecture(title: String, subject: String, transcript: String) {
         _isRecording.value = false
         _isRecordingPaused.value = false
         recordingTimerJob?.cancel()
         val duration = _recordingDuration.value
-        _isAnalyzingLecture.value = true
+        _lectureError.value = null
 
+        val cleanTranscript = transcript.trim()
+        if (cleanTranscript.isBlank()) {
+            _lectureError.value = "No audio or speech was transcribed. Please make sure the microphone is enabled and speak clearly."
+            return
+        }
+
+        _isAnalyzingLecture.value = true
         viewModelScope.launch {
-            val simulatedTranscript = "Today we covered fundamental principles of $subject including boundary conditions, derivations of the governing formulas, real-world case analysis, and preparation for upcoming midterm questions."
-            repository.processLectureRecording(
+            val result = repository.processLectureRecording(
                 title = if (title.isNotBlank()) title else "Lecture: $subject",
                 subject = subject,
                 durationSeconds = duration,
-                transcript = simulatedTranscript
+                transcript = cleanTranscript
             )
             _isAnalyzingLecture.value = false
+            if (result.isFailure) {
+                _lectureError.value = result.exceptionOrNull()?.localizedMessage ?: "Failed to analyze lecture."
+            }
         }
     }
 

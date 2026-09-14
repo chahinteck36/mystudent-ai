@@ -48,9 +48,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.data.local.entity.UserProfileEntity
 import com.example.ui.components.FirebaseAIVerificationCard
 import com.example.ui.util.AppStrings
 import com.example.ui.viewmodel.AIVerificationUiState
+import com.google.firebase.auth.FirebaseAuth
 
 data class AdminUser(
     val id: String,
@@ -63,6 +65,8 @@ data class AdminUser(
 
 @Composable
 fun AdminScreen(
+    currentUserProfile: UserProfileEntity? = null,
+    onTogglePlan: (String) -> Unit = {},
     lang: String = "en",
     aiVerificationState: AIVerificationUiState = AIVerificationUiState.Idle,
     onRunVerification: (String) -> Unit = {},
@@ -72,14 +76,22 @@ fun AdminScreen(
     var selectedModel by remember { mutableStateOf("gemini-3.5-flash") }
     var dailyLimitInput by remember { mutableStateOf("15") }
 
-    val mockUsers = remember {
-        mutableStateListOf(
-            AdminUser("1", "Karim Al-Hassan", "karim.study@example.com", "Computer Science", "Free", true),
-            AdminUser("2", "Sarah Jenkins", "sarah.j@university.edu", "Biomedical Engineering", "Pro", true),
-            AdminUser("3", "Omar Farooq", "omar.f@engineering.org", "Mechanical Engineering", "Free", true),
-            AdminUser("4", "Elena Rostova", "elena.r@math.ac.uk", "Pure Mathematics", "Pro", true),
-            AdminUser("5", "Tariq Mansoor", "tariq.m@physics.edu", "Physics", "Free", false)
-        )
+    val firebaseUser = remember { FirebaseAuth.getInstance().currentUser }
+    val realUsers = remember(currentUserProfile, firebaseUser) {
+        val list = mutableListOf<AdminUser>()
+        if (firebaseUser != null || currentUserProfile != null) {
+            val name = firebaseUser?.displayName?.takeIf { it.isNotBlank() }
+                ?: currentUserProfile?.name?.takeIf { it.isNotBlank() }
+                ?: "Registered Student"
+            val email = firebaseUser?.email
+                ?: currentUserProfile?.email
+                ?: "unregistered@studymate.ai"
+            val major = currentUserProfile?.major?.takeIf { it.isNotBlank() } ?: "General Studies"
+            val plan = currentUserProfile?.plan ?: "Free"
+            val id = firebaseUser?.uid ?: "local_1"
+            list.add(AdminUser(id, name, email, major, plan, true))
+        }
+        list
     }
 
     LazyColumn(
@@ -221,54 +233,91 @@ fun AdminScreen(
                     )
                 }
 
-                items(mockUsers) { user ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth().testTag("admin_user_card_${user.id}"),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                if (realUsers.isEmpty()) {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth().testTag("admin_no_users_card"),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.People,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.outline,
+                                    modifier = Modifier.size(40.dp)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = user.name,
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                    text = "No Registered Users in Directory",
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Text(
-                                    text = "${user.email} • ${user.major}",
-                                    style = MaterialTheme.typography.labelSmall,
+                                    text = "Users will appear here once authenticated via Firebase.",
+                                    style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = if (user.plan == "Pro") Color(0xFF10B981) else MaterialTheme.colorScheme.secondaryContainer,
-                                    modifier = Modifier.clickable {
-                                        user.plan = if (user.plan == "Pro") "Free" else "Pro"
-                                    }
-                                ) {
+                        }
+                    }
+                } else {
+                    items(realUsers) { user ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth().testTag("admin_user_card_${user.id}"),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = user.plan,
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                        color = if (user.plan == "Pro") Color.White else MaterialTheme.colorScheme.onSecondaryContainer,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        text = user.name,
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "${user.email} • ${user.major}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
 
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (user.plan == "Pro") Color(0xFF10B981) else MaterialTheme.colorScheme.secondaryContainer,
+                                        modifier = Modifier.clickable {
+                                            val newPlan = if (user.plan == "Pro") "Free" else "Pro"
+                                            user.plan = newPlan
+                                            onTogglePlan(newPlan)
+                                        }
+                                    ) {
+                                        Text(
+                                            text = user.plan,
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = if (user.plan == "Pro") Color.White else MaterialTheme.colorScheme.onSecondaryContainer,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        )
+                                    }
 
-                                Switch(
-                                    checked = user.isActive,
-                                    onCheckedChange = { user.isActive = it }
-                                )
+                                    Spacer(modifier = Modifier.width(8.dp))
+
+                                    Switch(
+                                        checked = user.isActive,
+                                        onCheckedChange = { user.isActive = it }
+                                    )
+                                }
                             }
                         }
                     }

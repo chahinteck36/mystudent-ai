@@ -74,6 +74,7 @@ fun QuizScreen(
     activeQuiz: QuizEntity?,
     isGeneratingQuiz: Boolean,
     userProfile: UserProfileEntity?,
+    quizError: String? = null,
     onSelectQuiz: (QuizEntity?) -> Unit,
     onGenerateQuiz: (subject: String, topic: String, count: Int, difficulty: String, type: String) -> Unit,
     onSubmitResult: (quizId: Long, score: Int, weakTopics: String) -> Unit,
@@ -132,6 +133,26 @@ fun QuizScreen(
                 }
             }
 
+            if (quizError != null) {
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                            .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = quizError,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+
             if (quizzes.isEmpty()) {
                 item {
                     Text(
@@ -157,6 +178,7 @@ fun QuizScreen(
         CreateQuizDialog(
             isGenerating = isGeneratingQuiz,
             defaultSubject = userProfile?.major ?: "General",
+            quizError = quizError,
             onDismiss = { showCreateDialog = false },
             onGenerate = { subject, topic, count, difficulty, type ->
                 onGenerateQuiz(subject, topic, count, difficulty, type)
@@ -545,6 +567,7 @@ private fun QuizTakerView(
 private fun CreateQuizDialog(
     isGenerating: Boolean,
     defaultSubject: String,
+    quizError: String? = null,
     onDismiss: () -> Unit,
     onGenerate: (subject: String, topic: String, count: Int, difficulty: String, type: String) -> Unit
 ) {
@@ -610,6 +633,14 @@ private fun CreateQuizDialog(
                             )
                         }
                     }
+                }
+
+                if (quizError != null) {
+                    Text(
+                        text = quizError,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
             }
         },

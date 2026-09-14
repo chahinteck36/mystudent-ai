@@ -16,17 +16,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MarkEmailRead
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.School
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -54,10 +59,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.ui.util.AppStrings
 import com.google.android.gms.tasks.Task
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.auth.UserProfileChangeRequest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
@@ -89,8 +97,10 @@ fun AuthScreen(
     var passwordVisible by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var infoMessage by remember { mutableStateOf<String?>(null) }
     var showForgotPasswordDialog by remember { mutableStateOf(false) }
     var forgotPasswordEmail by remember { mutableStateOf("") }
+    var showGoogleNotConfiguredDialog by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -100,6 +110,11 @@ fun AuthScreen(
         } catch (e: Exception) {
             null
         }
+    }
+
+    // Check if there is an active Firebase user waiting for email verification
+    var pendingVerificationUser by remember {
+        mutableStateOf<FirebaseUser?>(auth?.currentUser?.takeIf { !it.isEmailVerified })
     }
 
     LazyColumn(
@@ -135,248 +150,452 @@ fun AuthScreen(
                 color = MaterialTheme.colorScheme.onSurface
             )
             Text(
-                text = if (isSignUp) AppStrings.get("auth_register_title", lang) else AppStrings.get("auth_login_title", lang),
+                text = if (pendingVerificationUser != null) {
+                    "Email Verification Required"
+                } else if (isSignUp) {
+                    AppStrings.get("auth_register_title", lang)
+                } else {
+                    AppStrings.get("auth_login_title", lang)
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(24.dp))
         }
 
-        // Form Card
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("auth_card"),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-            ) {
-                Column(
+        // Email Verification Required Card
+        if (pendingVerificationUser != null) {
+            val user = pendingVerificationUser!!
+            item {
+                Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(24.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                        .testTag("email_verification_card"),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                 ) {
-                    // Name Field (Sign Up only)
-                    AnimatedVisibility(visible = isSignUp) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primaryContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MarkEmailRead,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+
+                        Text(
+                            text = "Verify Your Email Address",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            textAlign = TextAlign.Center
+                        )
+
+                        Text(
+                            text = "A verification email has been sent to:\n${user.email.orEmpty()}\n\nPlease check your email inbox and spam folder, click the verification link, and then tap below to continue.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+
+                        if (infoMessage != null) {
+                            Text(
+                                text = infoMessage ?: "",
+                                color = MaterialTheme.colorScheme.primary,
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                textAlign = TextAlign.Center
+                            )
+                        }
+
+                        if (errorMessage != null) {
+                            Text(
+                                text = errorMessage ?: "",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+
+                        // Button: I verified my email
+                        Button(
+                            onClick = {
+                                isLoading = true
+                                errorMessage = null
+                                infoMessage = null
+                                coroutineScope.launch {
+                                    try {
+                                        user.reload().awaitTask()
+                                        if (user.isEmailVerified) {
+                                            isLoading = false
+                                            onAuthSuccess(
+                                                user.uid,
+                                                user.email.orEmpty(),
+                                                user.displayName.orEmpty().ifBlank { user.email?.substringBefore("@") ?: "Student" }
+                                            )
+                                        } else {
+                                            isLoading = false
+                                            errorMessage = "Your email has not been verified yet. Please click the link in your email and try again."
+                                        }
+                                    } catch (e: Exception) {
+                                        isLoading = false
+                                        errorMessage = e.localizedMessage ?: "Failed to verify email status."
+                                    }
+                                }
+                            },
+                            enabled = !isLoading,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp)
+                                .testTag("btn_check_email_verified")
+                        ) {
+                            if (isLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "I Verified My Email",
+                                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                                )
+                            }
+                        }
+
+                        // Button: Resend verification email
+                        OutlinedButton(
+                            onClick = {
+                                isLoading = true
+                                errorMessage = null
+                                infoMessage = null
+                                coroutineScope.launch {
+                                    try {
+                                        user.sendEmailVerification().awaitTask()
+                                        isLoading = false
+                                        infoMessage = "Verification email sent again. Check your inbox and spam folder."
+                                    } catch (e: Exception) {
+                                        isLoading = false
+                                        errorMessage = e.localizedMessage ?: "Failed to resend verification email."
+                                    }
+                                }
+                            },
+                            enabled = !isLoading,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("btn_resend_verification_email")
+                        ) {
+                            Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Resend Verification Email")
+                        }
+
+                        // Sign Out / Use another account
+                        TextButton(
+                            onClick = {
+                                auth?.signOut()
+                                pendingVerificationUser = null
+                                errorMessage = null
+                                infoMessage = null
+                            },
+                            modifier = Modifier.testTag("btn_switch_account_verification")
+                        ) {
+                            Text(
+                                text = "Sign in with a different account",
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            // Form Card
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("auth_card"),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        // Name Field (Sign Up only)
+                        AnimatedVisibility(visible = isSignUp) {
+                            OutlinedTextField(
+                                value = name,
+                                onValueChange = { name = it },
+                                label = { Text(AppStrings.get("label_full_name", lang)) },
+                                leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                                singleLine = true,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("input_auth_name"),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                        }
+
+                        // Email Field
                         OutlinedTextField(
-                            value = name,
-                            onValueChange = { name = it },
-                            label = { Text(AppStrings.get("label_full_name", lang)) },
-                            leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                            value = email,
+                            onValueChange = {
+                                email = it
+                                errorMessage = null
+                            },
+                            label = { Text(AppStrings.get("label_email", lang)) },
+                            leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                             singleLine = true,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .testTag("input_auth_name"),
+                                .testTag("input_auth_email"),
                             shape = RoundedCornerShape(12.dp)
                         )
-                    }
 
-                    // Email Field
-                    OutlinedTextField(
-                        value = email,
-                        onValueChange = {
-                            email = it
-                            errorMessage = null
-                        },
-                        label = { Text(AppStrings.get("label_email", lang)) },
-                        leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("input_auth_email"),
-                        shape = RoundedCornerShape(12.dp)
-                    )
+                        // Password Field
+                        OutlinedTextField(
+                            value = password,
+                            onValueChange = {
+                                password = it
+                                errorMessage = null
+                            },
+                            label = { Text(AppStrings.get("label_password", lang)) },
+                            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                            trailingIcon = {
+                                IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                    Icon(
+                                        imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = "Toggle password visibility"
+                                    )
+                                }
+                            },
+                            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("input_auth_password"),
+                            shape = RoundedCornerShape(12.dp)
+                        )
 
-                    // Password Field
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = {
-                            password = it
-                            errorMessage = null
-                        },
-                        label = { Text(AppStrings.get("label_password", lang)) },
-                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                        trailingIcon = {
-                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                                Icon(
-                                    imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = "Toggle password visibility"
+                        // Forgot Password link (Login only)
+                        if (!isSignUp) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                Text(
+                                    text = AppStrings.get("btn_forgot_password", lang),
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .clickable {
+                                            forgotPasswordEmail = email
+                                            showForgotPasswordDialog = true
+                                        }
+                                        .testTag("btn_forgot_password")
                                 )
                             }
-                        },
-                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("input_auth_password"),
-                        shape = RoundedCornerShape(12.dp)
-                    )
+                        }
 
-                    // Forgot Password link (Login only)
-                    if (!isSignUp) {
+                        // Error Message Display
+                        if (errorMessage != null) {
+                            Text(
+                                text = errorMessage ?: "",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+
+                        // Primary Action Button (Login / Register)
+                        Button(
+                            onClick = {
+                                val trimmedEmail = email.trim()
+                                val trimmedPassword = password.trim()
+                                if (trimmedEmail.isBlank() || trimmedPassword.isBlank()) {
+                                    errorMessage = "Please provide both email and password."
+                                    return@Button
+                                }
+                                if (trimmedPassword.length < 6) {
+                                    errorMessage = "Password must be at least 6 characters long."
+                                    return@Button
+                                }
+                                if (isSignUp && name.isBlank()) {
+                                    errorMessage = "Please enter your name."
+                                    return@Button
+                                }
+
+                                if (auth == null) {
+                                    errorMessage = "Firebase Authentication is unavailable on this device."
+                                    return@Button
+                                }
+
+                                isLoading = true
+                                errorMessage = null
+                                infoMessage = null
+
+                                coroutineScope.launch {
+                                    try {
+                                        if (isSignUp) {
+                                            val result = auth.createUserWithEmailAndPassword(trimmedEmail, trimmedPassword).awaitTask()
+                                            val user = result.user
+                                            if (user != null) {
+                                                try {
+                                                    val profileUpdates = UserProfileChangeRequest.Builder()
+                                                        .setDisplayName(name.trim())
+                                                        .build()
+                                                    user.updateProfile(profileUpdates).awaitTask()
+                                                } catch (pe: Exception) {
+                                                    android.util.Log.w("AuthScreen", "Failed to set display name", pe)
+                                                }
+                                                try {
+                                                    user.sendEmailVerification().awaitTask()
+                                                } catch (ve: Exception) {
+                                                    android.util.Log.w("AuthScreen", "Failed to send initial verification email", ve)
+                                                }
+                                                isLoading = false
+                                                pendingVerificationUser = user
+                                            } else {
+                                                isLoading = false
+                                                errorMessage = "User creation failed: null user received."
+                                            }
+                                        } else {
+                                            val result = auth.signInWithEmailAndPassword(trimmedEmail, trimmedPassword).awaitTask()
+                                            val user = result.user
+                                            if (user != null) {
+                                                user.reload().awaitTask()
+                                                isLoading = false
+                                                if (user.isEmailVerified) {
+                                                    onAuthSuccess(
+                                                        user.uid,
+                                                        trimmedEmail,
+                                                        user.displayName ?: name.ifBlank { trimmedEmail.substringBefore("@") }
+                                                    )
+                                                } else {
+                                                    pendingVerificationUser = user
+                                                }
+                                            } else {
+                                                isLoading = false
+                                                errorMessage = "Login failed: user not found."
+                                            }
+                                        }
+                                    } catch (e: Exception) {
+                                        isLoading = false
+                                        errorMessage = e.localizedMessage ?: "Authentication failed. Please check your credentials."
+                                    }
+                                }
+                            },
+                            enabled = !isLoading,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp)
+                                .testTag("btn_auth_primary")
+                        ) {
+                            if (isLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Text(
+                                    text = if (isSignUp) AppStrings.get("btn_register", lang) else AppStrings.get("btn_login", lang),
+                                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                                )
+                            }
+                        }
+
+                        // Google Sign-In Alternative
+                        OutlinedButton(
+                            onClick = {
+                                showGoogleNotConfiguredDialog = true
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("btn_auth_google")
+                        ) {
+                            Text("Sign in with Google", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium))
+                        }
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                        // Switch between Sign In / Sign Up
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = AppStrings.get("btn_forgot_password", lang),
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                text = if (isSignUp) AppStrings.get("already_have_account", lang) else AppStrings.get("dont_have_account", lang),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (isSignUp) AppStrings.get("btn_login", lang) else AppStrings.get("btn_register", lang),
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier
                                     .clickable {
-                                        forgotPasswordEmail = email
-                                        showForgotPasswordDialog = true
+                                        isSignUp = !isSignUp
+                                        errorMessage = null
                                     }
-                                    .testTag("btn_forgot_password")
+                                    .testTag("btn_toggle_auth_mode")
                             )
                         }
-                    }
-
-                    // Error Message Display
-                    if (errorMessage != null) {
-                        Text(
-                            text = errorMessage ?: "",
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-
-                    // Primary Action Button (Login / Register)
-                    Button(
-                        onClick = {
-                            if (email.isBlank() || password.isBlank()) {
-                                errorMessage = "Please provide both email and password."
-                                return@Button
-                            }
-                            if (isSignUp && name.isBlank()) {
-                                errorMessage = "Please enter your name."
-                                return@Button
-                            }
-
-                            isLoading = true
-                            errorMessage = null
-
-                            coroutineScope.launch {
-                                try {
-                                    if (auth != null) {
-                                        if (isSignUp) {
-                                            val result = auth.createUserWithEmailAndPassword(email, password).awaitTask()
-                                            val user = result.user
-                                            isLoading = false
-                                            onAuthSuccess(
-                                                user?.uid ?: "user_1",
-                                                email,
-                                                name.ifBlank { email.substringBefore("@") }
-                                            )
-                                        } else {
-                                            val result = auth.signInWithEmailAndPassword(email, password).awaitTask()
-                                            val user = result.user
-                                            isLoading = false
-                                            onAuthSuccess(
-                                                user?.uid ?: "user_1",
-                                                email,
-                                                user?.displayName ?: email.substringBefore("@")
-                                            )
-                                        }
-                                    } else {
-                                        // Offline / fallback simulated authentication
-                                        isLoading = false
-                                        val display = if (isSignUp && name.isNotBlank()) name else email.substringBefore("@")
-                                        onAuthSuccess("uid_${System.currentTimeMillis()}", email, display)
-                                    }
-                                } catch (e: Exception) {
-                                    isLoading = false
-                                    errorMessage = e.localizedMessage ?: "Authentication failed. Please try again."
-                                }
-                            }
-                        },
-                        enabled = !isLoading,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(50.dp)
-                            .testTag("btn_auth_primary")
-                    ) {
-                        if (isLoading) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                strokeWidth = 2.dp
-                            )
-                        } else {
-                            Text(
-                                text = if (isSignUp) AppStrings.get("btn_register", lang) else AppStrings.get("btn_login", lang),
-                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
-                            )
-                        }
-                    }
-
-                    // Google Sign-In Alternative
-                    OutlinedButton(
-                        onClick = {
-                            val googleEmail = "student.demo@studymate.ai"
-                            val googleName = "StudyMate Scholar"
-                            onAuthSuccess("google_${System.currentTimeMillis()}", googleEmail, googleName)
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .testTag("btn_auth_google")
-                    ) {
-                        Text("Sign in with Google", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium))
-                    }
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                    // Switch between Sign In / Sign Up
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = if (isSignUp) AppStrings.get("already_have_account", lang) else AppStrings.get("dont_have_account", lang),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = if (isSignUp) AppStrings.get("btn_login", lang) else AppStrings.get("btn_register", lang),
-                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier
-                                .clickable {
-                                    isSignUp = !isSignUp
-                                    errorMessage = null
-                                }
-                                .testTag("btn_toggle_auth_mode")
-                        )
                     }
                 }
             }
         }
+    }
 
-        // Continue as Guest / Explore
-        item {
-            Spacer(modifier = Modifier.height(16.dp))
-            TextButton(
-                onClick = onContinueAsGuest,
-                modifier = Modifier.testTag("btn_continue_as_guest")
-            ) {
+    // Google Sign-In Not Configured Dialog
+    if (showGoogleNotConfiguredDialog) {
+        AlertDialog(
+            onDismissRequest = { showGoogleNotConfiguredDialog = false },
+            title = { Text("Google Sign-In") },
+            text = {
                 Text(
-                    text = "Continue as Guest / Explore Mode",
-                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    text = "Google Sign-In is not currently configured for this Firebase project. Please create an account or sign in with your Email and Password using Firebase Authentication.",
+                    style = MaterialTheme.typography.bodyMedium
                 )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showGoogleNotConfiguredDialog = false },
+                    modifier = Modifier.testTag("btn_dismiss_google_dialog")
+                ) {
+                    Text("OK")
+                }
             }
-            Spacer(modifier = Modifier.height(24.dp))
-        }
+        )
     }
 
     // Forgot Password Dialog
@@ -404,7 +623,7 @@ fun AuthScreen(
                 Button(
                     onClick = {
                         if (forgotPasswordEmail.isNotBlank()) {
-                            auth?.sendPasswordResetEmail(forgotPasswordEmail)
+                            auth?.sendPasswordResetEmail(forgotPasswordEmail.trim())
                             Toast.makeText(context, "Password reset email dispatched!", Toast.LENGTH_LONG).show()
                             showForgotPasswordDialog = false
                         }

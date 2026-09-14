@@ -154,7 +154,8 @@ class StudyMateRepository(
             incrementAiUsage()
             Result.success(responseText)
         } else {
-            val errText = "I encountered an error processing your query. Please try again."
+            val errMessage = aiResult.exceptionOrNull()?.localizedMessage ?: "Unknown error"
+            val errText = "Error connecting to AI service: $errMessage"
             dao.insertChatMessage(
                 ChatMessageEntity(
                     conversationId = "main",

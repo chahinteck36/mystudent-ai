@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Quiz
 import androidx.compose.material.icons.filled.Subject
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -59,6 +60,7 @@ fun SummaryScreen(
     currentSummary: LessonSummaryEntity?,
     isSummarizing: Boolean,
     userProfile: UserProfileEntity?,
+    summaryError: String? = null,
     onGenerateSummary: (title: String, subject: String, text: String, length: String) -> Unit,
     onConvertToCards: (title: String, content: String) -> Unit,
     onConvertToQuiz: (subject: String, topic: String) -> Unit,
@@ -192,6 +194,25 @@ fun SummaryScreen(
                             Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(AppStrings.get("btn_summarize", lang))
+                        }
+                    }
+
+                    if (summaryError != null) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = summaryError,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall
+                            )
                         }
                     }
                 }

@@ -321,11 +321,13 @@ fun StudyMateApp(
                     "summary" -> {
                         val currentSummary by viewModel.selectedSummary.collectAsState()
                         val isSummarizing by viewModel.isSummarizing.collectAsState()
+                        val summaryError by viewModel.summaryError.collectAsState()
 
                         SummaryScreen(
                             currentSummary = currentSummary,
                             isSummarizing = isSummarizing,
                             userProfile = userProfile,
+                            summaryError = summaryError,
                             onGenerateSummary = { title, subject, text, len ->
                                 viewModel.generateSummary(title, subject, text, len)
                             },
@@ -350,11 +352,13 @@ fun StudyMateApp(
                         val decks by viewModel.allDecks.collectAsState()
                         val selectedDeck by viewModel.selectedDeck.collectAsState()
                         val isCreatingDeck by viewModel.isCreatingDeck.collectAsState()
+                        val deckError by viewModel.deckError.collectAsState()
 
                         FlashcardsScreen(
                             decks = decks,
                             selectedDeck = selectedDeck,
                             isCreatingDeck = isCreatingDeck,
+                            deckError = deckError,
                             onSelectDeck = { viewModel.selectDeck(it) },
                             onCreateDeck = { title, subject, content, count ->
                                 viewModel.createDeckFromContent(title, subject, content, count)
@@ -371,12 +375,14 @@ fun StudyMateApp(
                         val quizzes by viewModel.allQuizzes.collectAsState()
                         val activeQuiz by viewModel.activeQuiz.collectAsState()
                         val isGeneratingQuiz by viewModel.isGeneratingQuiz.collectAsState()
+                        val quizError by viewModel.quizError.collectAsState()
 
                         QuizScreen(
                             quizzes = quizzes,
                             activeQuiz = activeQuiz,
                             isGeneratingQuiz = isGeneratingQuiz,
                             userProfile = userProfile,
+                            quizError = quizError,
                             onSelectQuiz = { viewModel.selectQuiz(it) },
                             onGenerateQuiz = { subject, topic, count, difficulty, type ->
                                 viewModel.generateQuiz(subject, topic, count, difficulty, type)
@@ -395,6 +401,7 @@ fun StudyMateApp(
                         val isPaused by viewModel.isRecordingPaused.collectAsState()
                         val duration by viewModel.recordingDuration.collectAsState()
                         val isAnalyzing by viewModel.isAnalyzingLecture.collectAsState()
+                        val lectureError by viewModel.lectureError.collectAsState()
 
                         LectureRecorderScreen(
                             lectures = lectures,
@@ -403,11 +410,12 @@ fun StudyMateApp(
                             durationSeconds = duration,
                             isAnalyzing = isAnalyzing,
                             userProfile = userProfile,
+                            lectureError = lectureError,
                             onStartRecording = { viewModel.startLectureRecording() },
                             onPauseRecording = { viewModel.pauseLectureRecording() },
                             onResumeRecording = { viewModel.resumeLectureRecording() },
-                            onStopRecording = { title, subject ->
-                                viewModel.stopAndAnalyzeLecture(title, subject)
+                            onStopRecording = { title, subject, transcript ->
+                                viewModel.stopAndAnalyzeLecture(title, subject, transcript)
                             },
                             onDeleteLecture = { viewModel.deleteLecture(it) },
                             lang = lang
@@ -493,6 +501,10 @@ fun StudyMateApp(
                     "admin" -> {
                         val aiVerificationState by viewModel.aiVerificationState.collectAsState()
                         AdminScreen(
+                            currentUserProfile = userProfile,
+                            onTogglePlan = { newPlan ->
+                                if (newPlan == "Pro") viewModel.upgradeToPro()
+                            },
                             lang = lang,
                             aiVerificationState = aiVerificationState,
                             onRunVerification = { prompt -> viewModel.runAIVerification(prompt) },

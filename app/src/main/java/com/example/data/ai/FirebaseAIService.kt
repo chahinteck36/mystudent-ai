@@ -115,29 +115,37 @@ class FirebaseAIService(
                         subject = json.optString("subject", "General Academic"),
                         understanding = json.optString("understanding", "Solve for the requested variables."),
                         givenInfo = json.optString("givenInfo", "Identified from problem text."),
-                        solutionSteps = json.optString("solutionSteps", "Step 1: Analyze problem statement."),
-                        finalAnswer = json.optString("finalAnswer", "Solution derived."),
+                        solutionSteps = json.optString("solutionSteps", text),
+                        finalAnswer = json.optString("finalAnswer", "See step-by-step solution."),
                         explanation = json.optString("explanation", "Review the step-by-step derivation above."),
-                        checkQuestion = json.optString("checkQuestion", "Can you explain the main principle used?"),
-                        checkAnswer = json.optString("checkAnswer", "The fundamental definition applied in Step 1.")
+                        checkQuestion = json.optString("checkQuestion", ""),
+                        checkAnswer = json.optString("checkAnswer", "")
                     )
                 )
             } catch (e: Exception) {
-                Log.w("FirebaseAIService", "Failed to parse JSON, building fallback", e)
+                Log.w("FirebaseAIService", "Failed to parse JSON, building structured result from text", e)
+                return Result.success(
+                    ProblemSolutionResult(
+                        problemText = problemText,
+                        subject = "Academic Study",
+                        understanding = "Analysis of requested problem.",
+                        givenInfo = problemText,
+                        solutionSteps = text,
+                        finalAnswer = "Solution provided above.",
+                        explanation = "Generated via Gemini.",
+                        checkQuestion = "",
+                        checkAnswer = ""
+                    )
+                )
             }
         }
 
-        // Fallback for offline/local simulation
-        return Result.success(generateAcademicProblemFallback(problemText, userProfile))
+        return Result.failure(aiResult.exceptionOrNull() ?: Exception("Failed to solve problem. Please check your connection and try again."))
     }
 
     override suspend fun analyzeImage(imageBase64: String): Result<String> {
         val systemPrompt = "Extract and transcribe all text, mathematical formulas, and academic symbols from this image accurately."
-        val aiResult = generateContentWithFirebaseAI(systemPrompt, "Transcribe all academic content from this image.", imageBase64)
-        if (aiResult.isSuccess) {
-            return aiResult
-        }
-        return Result.success("Detected handwritten problem: Solve ∫ x * cos(x) dx using integration by parts.")
+        return generateContentWithFirebaseAI(systemPrompt, "Transcribe all academic content from this image.", imageBase64)
     }
 
     override suspend fun summarizeText(
@@ -163,8 +171,9 @@ class FirebaseAIService(
 
         val aiResult = generateContentWithFirebaseAI(systemPrompt, "Summarize this educational content:\n$text")
         if (aiResult.isSuccess) {
+            val raw = aiResult.getOrNull().orEmpty()
             try {
-                val cleaned = aiResult.getOrNull().orEmpty().trim()
+                val cleaned = raw.trim()
                     .removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
                 val json = JSONObject(cleaned)
                 return Result.success(
@@ -181,11 +190,24 @@ class FirebaseAIService(
                     )
                 )
             } catch (e: Exception) {
-                Log.w("FirebaseAIService", "JSON parsing failed for summary", e)
+                Log.w("FirebaseAIService", "JSON parsing failed for summary, using raw text", e)
+                return Result.success(
+                    SummaryResult(
+                        title = "Summary",
+                        subject = userProfile.major.ifBlank { "Academic Studies" },
+                        overview = raw,
+                        keyConcepts = "",
+                        definitions = "",
+                        formulas = "",
+                        examples = "",
+                        thingsToRemember = "",
+                        quickReview = ""
+                    )
+                )
             }
         }
 
-        return Result.success(generateAcademicSummaryFallback(text, length, userProfile))
+        return Result.failure(aiResult.exceptionOrNull() ?: Exception("Failed to generate summary. Please try again."))
     }
 
     override suspend fun generateFlashcards(
@@ -219,10 +241,11 @@ class FirebaseAIService(
                 if (list.isNotEmpty()) return Result.success(list)
             } catch (e: Exception) {
                 Log.w("FirebaseAIService", "Failed to parse flashcard JSON", e)
+                return Result.failure(Exception("Failed to format flashcards from AI response. Please try again."))
             }
         }
 
-        return Result.success(generateFlashcardFallback(content, count))
+        return Result.failure(aiResult.exceptionOrNull() ?: Exception("Failed to generate flashcards. Please try again."))
     }
 
     override suspend fun generateQuiz(
@@ -273,10 +296,11 @@ class FirebaseAIService(
                 if (list.isNotEmpty()) return Result.success(list)
             } catch (e: Exception) {
                 Log.w("FirebaseAIService", "Quiz parsing failed", e)
+                return Result.failure(Exception("Failed to parse quiz questions from AI response. Please try again."))
             }
         }
 
-        return Result.success(generateQuizFallback(subject, topic, count, difficulty))
+        return Result.failure(aiResult.exceptionOrNull() ?: Exception("Failed to generate quiz. Please try again."))
     }
 
     override suspend fun chatTutor(
@@ -306,12 +330,7 @@ class FirebaseAIService(
             append("Student: $userMessage\nTutor: ")
         }
 
-        val aiResult = generateContentWithFirebaseAI(systemPrompt, historyText)
-        if (aiResult.isSuccess) {
-            return aiResult
-        }
-
-        return Result.success(generateTutorChatFallback(userMessage, userProfile))
+        return generateContentWithFirebaseAI(systemPrompt, historyText)
     }
 
     override suspend fun analyzeLecture(
@@ -358,165 +377,11 @@ class FirebaseAIService(
                 )
             } catch (e: Exception) {
                 Log.w("FirebaseAIService", "Lecture parsing error", e)
+                return Result.failure(Exception("Failed to parse lecture notes from AI response. Please try again."))
             }
         }
 
-        return Result.success(generateLectureFallback(transcript, userProfile))
-    }
-
-    // --- Fallbacks ---
-
-    private fun generateAcademicProblemFallback(problemText: String, profile: UserProfileEntity): ProblemSolutionResult {
-        val lower = problemText.lowercase()
-        return when {
-            lower.contains("integral") || lower.contains("integrate") || lower.contains("dx") -> {
-                ProblemSolutionResult(
-                    problemText = problemText,
-                    subject = "Calculus & Analysis",
-                    understanding = "Evaluate the given definite or indefinite integral using appropriate analytical techniques.",
-                    givenInfo = "Integrand expression: $problemText",
-                    solutionSteps = "Step 1: Identify algebraic structure of the integrand.\nStep 2: Choose standard substitution u = g(x) or Integration by Parts (∫ u dv = uv - ∫ v du).\nStep 3: Compute differentials and apply antiderivative power rules.\nStep 4: Combine algebraic terms and append constant of integration C.",
-                    finalAnswer = "∫ f(x) dx = F(x) + C",
-                    explanation = "Integration is the continuous accumulation of infinitesimal quantities. Check boundary behavior and domain restrictions.",
-                    checkQuestion = "What happens if limits of integration are reversed?",
-                    checkAnswer = "The numerical value changes sign: ∫_a^b f(x) dx = - ∫_b^a f(x) dx."
-                )
-            }
-            else -> {
-                ProblemSolutionResult(
-                    problemText = problemText,
-                    subject = if (profile.major.isNotBlank()) profile.major else "General Science",
-                    understanding = "Systematically analyze and deduce the solution for: \"$problemText\".",
-                    givenInfo = "Input parameter query: $problemText",
-                    solutionSteps = "Step 1: Parse the system constraints and given variables.\nStep 2: Apply governing physical/mathematical equations.\nStep 3: Solve algebraically for the unknown variable.\nStep 4: Verify units, dimensions, and numerical validity.",
-                    finalAnswer = "Comprehensive solution verified.",
-                    explanation = "Standard systematic problem-solving methodology applied according to ${profile.educationLevel} standards.",
-                    checkQuestion = "What is the primary constraint identified?",
-                    checkAnswer = "Conservation laws and boundary parameters defined in Step 1."
-                )
-            }
-        }
-    }
-
-    private fun generateAcademicSummaryFallback(text: String, length: String, profile: UserProfileEntity): SummaryResult {
-        val snippet = text.take(60)
-        return SummaryResult(
-            title = "Summary: $snippet...",
-            subject = if (profile.major.isNotBlank()) profile.major else "Academic Study",
-            overview = "This material covers foundational principles, key mechanisms, and analytical deductions required for ${profile.educationLevel} mastery.",
-            keyConcepts = "• Core Concept 1: Theoretical foundation and basic laws.\n• Core Concept 2: Methodological steps and practical applications.\n• Core Concept 3: Empirical implications and real-world examples.",
-            definitions = "• Primary Term: The formal scientific designation of the investigated property.\n• Parameter α: The boundary coefficient determining system convergence.",
-            formulas = "• Base relation: f(x) = ∑ a_n * x^n\n• Equilibrium state: ΔE = 0",
-            examples = "Practical case study demonstrates that applying this principle yields a 40% improvement in analytical clarity.",
-            thingsToRemember = "• Always verify initial assumptions before applying final formulas.\n• Watch out for sign errors in algebraic reductions.",
-            quickReview = "1. Memorize core definition.\n2. Practice two derivation steps.\n3. Solve 1 sample exam problem."
-        )
-    }
-
-    private fun generateFlashcardFallback(content: String, count: Int): List<FlashcardItemResult> {
-        return listOf(
-            FlashcardItemResult(
-                question = "What is the primary thesis of: \"${content.take(40)}...\"?",
-                answer = "It establishes the fundamental theoretical principles and practical deductions of the topic.",
-                difficulty = "Medium"
-            ),
-            FlashcardItemResult(
-                question = "Which key formula or relation defines this subject?",
-                answer = "The fundamental governing relationship connecting independent and dependent state variables.",
-                difficulty = "Hard"
-            ),
-            FlashcardItemResult(
-                question = "What common pitfall should students avoid when applying this concept?",
-                answer = "Assuming linear behavior when boundary conditions exhibit non-linear or asymptotic constraints.",
-                difficulty = "Medium"
-            ),
-            FlashcardItemResult(
-                question = "How is this concept verified experimentally?",
-                answer = "Through controlled baseline measurements and statistical hypothesis testing.",
-                difficulty = "Easy"
-            ),
-            FlashcardItemResult(
-                question = "What is the most high-yield exam takeaway from this lesson?",
-                answer = "The step-by-step derivation sequence and its physical/mathematical interpretation.",
-                difficulty = "Hard"
-            )
-        ).take(count.coerceAtLeast(1))
-    }
-
-    private fun generateQuizFallback(subject: String, topic: String, count: Int, difficulty: String): List<QuizQuestionResult> {
-        return listOf(
-            QuizQuestionResult(
-                id = 1,
-                question = "In $subject ($topic), which of the following best describes the fundamental principle?",
-                options = listOf(
-                    "The governing law established through empirical validation and conservation",
-                    "A variable parameter with no relation to boundary states",
-                    "An approximation valid only at infinite temperature",
-                    "A redundant formulation discarded in modern theory"
-                ),
-                correctIndex = 0,
-                explanation = "Option 1 is the exact formal definition according to canonical curriculum standards."
-            ),
-            QuizQuestionResult(
-                id = 2,
-                question = "When analyzing $topic at $difficulty level, which method is considered standard practice?",
-                options = listOf(
-                    "Arbitrary numerical estimation without units",
-                    "Step-by-step analytical deduction with explicit boundary check",
-                    "Ignoring intermediate states",
-                    "Relying solely on intuition"
-                ),
-                correctIndex = 1,
-                explanation = "Rigorous deduction combined with boundary verification prevents systematic error."
-            ),
-            QuizQuestionResult(
-                id = 3,
-                question = "What is the effect of doubling the primary independent variable in $topic?",
-                options = listOf(
-                    "The dependent output changes by a factor determined by the power exponent",
-                    "Nothing changes under any circumstances",
-                    "The system becomes permanently undefined",
-                    "The units invert automatically"
-                ),
-                correctIndex = 0,
-                explanation = "Linear or polynomial scaling directly follows the constitutive equation."
-            )
-        ).take(count.coerceAtLeast(1))
-    }
-
-    private fun generateTutorChatFallback(userMessage: String, profile: UserProfileEntity): String {
-        return """
-            Hello! As your StudyMate Tutor for ${profile.major.ifBlank { "your courses" }}, let's break down your question:
-            
-            **"${userMessage}"**
-            
-            1. **Concept Breakdown**: Every academic problem is easier when split into core variables and known principles.
-            2. **Step-by-Step Approach**: First identify the governing rule for your ${profile.educationLevel} curriculum, then write down what is given.
-            3. **Next Step**: Would you like us to solve a concrete numerical example together, or review the underlying theory?
-        """.trimIndent()
-    }
-
-    private fun generateLectureFallback(transcript: String, profile: UserProfileEntity): LectureResult {
-        return LectureResult(
-            summary = "Comprehensive lecture addressing foundational concepts, methodological proofs, and problem-solving strategies in ${profile.major.ifBlank { "Academic Studies" }}.",
-            keyPoints = listOf(
-                "Introduction of key terms and context in modern science.",
-                "Detailed derivation of the primary mathematical / theoretical model.",
-                "Examination of edge cases, boundary conditions, and common pitfalls.",
-                "Synthesized takeaways for upcoming academic evaluations."
-            ),
-            importantTerms = listOf(
-                "Primary Principle: The formal governing axiom.",
-                "Coefficient: Proportionality constant balancing dimensions.",
-                "Equilibrium: Stable operating point of the observed system."
-            ),
-            questions = listOf(
-                "What is the physical or logical meaning of the primary term?",
-                "How does the model react to boundary perturbations?",
-                "Can you derive the final formula from the first principles given in class?"
-            ),
-            studyNotes = "• Focus on the derivation sequence.\n• Review questions at the end of the chapter.\n• Verify sign conventions in all calculation steps."
-        )
+        return Result.failure(aiResult.exceptionOrNull() ?: Exception("Failed to analyze lecture transcript. Please try again."))
     }
 
     override suspend fun verifyGeminiConnection(testPrompt: String): Result<String> = withContext(Dispatchers.IO) {

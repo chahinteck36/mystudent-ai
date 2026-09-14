@@ -1,5 +1,14 @@
 package com.example.ui.screens.lectures
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -29,6 +38,7 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -41,6 +51,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,10 +60,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.example.data.local.entity.LectureNoteEntity
 import com.example.data.local.entity.UserProfileEntity
 import com.example.ui.util.AppStrings
@@ -65,16 +78,95 @@ fun LectureRecorderScreen(
     durationSeconds: Int,
     isAnalyzing: Boolean,
     userProfile: UserProfileEntity?,
+    lectureError: String? = null,
     onStartRecording: () -> Unit,
     onPauseRecording: () -> Unit,
     onResumeRecording: () -> Unit,
-    onStopRecording: (title: String, subject: String) -> Unit,
+    onStopRecording: (title: String, subject: String, transcript: String) -> Unit,
     onDeleteLecture: (Long) -> Unit,
     lang: String = "en"
 ) {
+    val context = LocalContext.current
     var lectureTitle by remember { mutableStateOf("") }
     var lectureSubject by remember { mutableStateOf(userProfile?.major ?: "General") }
+    var liveTranscript by remember { mutableStateOf("") }
     var selectedLecture by remember { mutableStateOf<LectureNoteEntity?>(null) }
+    var localError by remember { mutableStateOf<String?>(null) }
+
+    val speechRecognizer = remember {
+        if (SpeechRecognizer.isRecognitionAvailable(context)) {
+            SpeechRecognizer.createSpeechRecognizer(context)
+        } else {
+            null
+        }
+    }
+
+    val recognitionIntent = remember {
+        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+        }
+    }
+
+    fun startListening() {
+        try {
+            speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {}
+                override fun onBeginningOfSpeech() {}
+                override fun onRmsChanged(rmsdB: Float) {}
+                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEndOfSpeech() {}
+                override fun onError(error: Int) {}
+                override fun onResults(results: Bundle?) {
+                    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    if (!matches.isNullOrEmpty()) {
+                        val text = matches[0]
+                        liveTranscript = if (liveTranscript.isBlank()) text else "$liveTranscript $text"
+                    }
+                }
+                override fun onPartialResults(partialResults: Bundle?) {
+                    val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    if (!matches.isNullOrEmpty()) {
+                        val text = matches[0]
+                        if (!liveTranscript.endsWith(text)) {
+                            liveTranscript = if (liveTranscript.isBlank()) text else "$liveTranscript $text"
+                        }
+                    }
+                }
+                override fun onEvent(eventType: Int, params: Bundle?) {}
+            })
+            speechRecognizer?.startListening(recognitionIntent)
+        } catch (e: Exception) {
+            android.util.Log.e("LectureRecorder", "Error starting speech recognition", e)
+        }
+    }
+
+    fun stopListening() {
+        try {
+            speechRecognizer?.stopListening()
+        } catch (e: Exception) {
+            // ignore
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            speechRecognizer?.destroy()
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            localError = null
+            onStartRecording()
+            startListening()
+        } else {
+            localError = "Microphone permission is required to record lectures."
+        }
+    }
 
     val infiniteTransition = rememberInfiniteTransition(label = "wave")
     val waveScale by infiniteTransition.animateFloat(
@@ -144,6 +236,14 @@ fun LectureRecorderScreen(
                             modifier = Modifier.fillMaxWidth().testTag("input_lecture_subject"),
                             shape = RoundedCornerShape(12.dp)
                         )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = liveTranscript,
+                            onValueChange = { liveTranscript = it },
+                            placeholder = { Text("Lecture notes / Spoken transcript (recorded via mic or typed)...") },
+                            modifier = Modifier.fillMaxWidth().height(100.dp).testTag("input_lecture_transcript"),
+                            shape = RoundedCornerShape(12.dp)
+                        )
                         Spacer(modifier = Modifier.height(18.dp))
                     }
 
@@ -183,6 +283,18 @@ fun LectureRecorderScreen(
                             }
                         }
 
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Live spoken transcript preview
+                        OutlinedTextField(
+                            value = liveTranscript,
+                            onValueChange = { liveTranscript = it },
+                            label = { Text("Live Speech Transcript") },
+                            placeholder = { Text("Listening to speaker audio...") },
+                            modifier = Modifier.fillMaxWidth().height(100.dp),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+
                         Spacer(modifier = Modifier.height(20.dp))
 
                         // Pause / Resume & Stop buttons
@@ -192,7 +304,15 @@ fun LectureRecorderScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             IconButton(
-                                onClick = { if (isPaused) onResumeRecording() else onPauseRecording() },
+                                onClick = {
+                                    if (isPaused) {
+                                        onResumeRecording()
+                                        startListening()
+                                    } else {
+                                        onPauseRecording()
+                                        stopListening()
+                                    }
+                                },
                                 modifier = Modifier
                                     .size(54.dp)
                                     .clip(CircleShape)
@@ -209,8 +329,13 @@ fun LectureRecorderScreen(
 
                             IconButton(
                                 onClick = {
+                                    stopListening()
                                     val t = if (lectureTitle.isNotBlank()) lectureTitle else "Lecture Note"
-                                    onStopRecording(t, lectureSubject)
+                                    if (liveTranscript.isBlank()) {
+                                        localError = "Please speak into the microphone or provide lecture text before stopping."
+                                    } else {
+                                        onStopRecording(t, lectureSubject, liveTranscript)
+                                    }
                                 },
                                 modifier = Modifier
                                     .size(64.dp)
@@ -241,7 +366,20 @@ fun LectureRecorderScreen(
                                 .size(80.dp)
                                 .clip(CircleShape)
                                 .background(MaterialTheme.colorScheme.primary)
-                                .clickable { onStartRecording() }
+                                .clickable {
+                                    localError = null
+                                    val hasPermission = ContextCompat.checkSelfPermission(
+                                        context,
+                                        Manifest.permission.RECORD_AUDIO
+                                    ) == PackageManager.PERMISSION_GRANTED
+
+                                    if (hasPermission) {
+                                        onStartRecording()
+                                        startListening()
+                                    } else {
+                                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    }
+                                }
                                 .testTag("btn_start_recording"),
                             contentAlignment = Alignment.Center
                         ) {
@@ -258,6 +396,26 @@ fun LectureRecorderScreen(
                             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.primary
                         )
+                    }
+
+                    val displayError = localError ?: lectureError
+                    if (displayError != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = displayError,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
                     }
                 }
             }

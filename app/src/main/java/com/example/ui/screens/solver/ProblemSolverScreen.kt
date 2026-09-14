@@ -1,6 +1,9 @@
 package com.example.ui.screens.solver
 
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -25,6 +28,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Lightbulb
@@ -33,6 +37,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -80,11 +85,35 @@ fun ProblemSolverScreen(
     lang: String = "en"
 ) {
     var problemInput by remember { mutableStateOf("") }
-    var attachedImageSimulated by remember { mutableStateOf(false) }
+    var attachedImageUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var attachedImageBase64 by remember { mutableStateOf<String?>(null) }
+    var photoError by remember { mutableStateOf<String?>(null) }
     var showCheckAnswer by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        attachedImageUri = uri
+        if (uri != null) {
+            try {
+                photoError = null
+                val inputStream = context.contentResolver.openInputStream(uri)
+                val bytes = inputStream?.use { it.readBytes() }
+                if (bytes != null) {
+                    attachedImageBase64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                }
+            } catch (e: Exception) {
+                photoError = "Unable to read image: ${e.localizedMessage}"
+                attachedImageBase64 = null
+                attachedImageUri = null
+            }
+        } else {
+            attachedImageBase64 = null
+        }
+    }
 
     val sampleProblems = listOf(
         "Evaluate ∫ (3x² + 2x - 5) dx with bounds [0, 2].",
@@ -138,6 +167,37 @@ fun ProblemSolverScreen(
                         shape = RoundedCornerShape(12.dp)
                     )
 
+                    if (attachedImageUri != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.CameraAlt, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Problem Photo Attached",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium),
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    attachedImageUri = null
+                                    attachedImageBase64 = null
+                                },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = "Remove photo", modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(12.dp))
 
                     Row(
@@ -148,25 +208,29 @@ fun ProblemSolverScreen(
                         // Attach Camera / OCR photo
                         OutlinedButton(
                             onClick = {
-                                attachedImageSimulated = !attachedImageSimulated
-                                if (attachedImageSimulated && problemInput.isBlank()) {
-                                    problemInput = "Solve for x: 2x² - 5x + 3 = 0 using the quadratic formula."
-                                }
+                                photoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
                             },
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.testTag("btn_attach_photo")
                         ) {
                             Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text(if (attachedImageSimulated) "Photo Attached" else "Scan / Photo")
+                            Text(if (attachedImageUri != null) "Change Photo" else "Scan / Photo")
                         }
 
                         // Solve Button
                         Button(
                             onClick = {
-                                onSolve(problemInput, if (attachedImageSimulated) "simulated_base64" else null)
+                                val query = if (problemInput.isNotBlank()) {
+                                    problemInput
+                                } else {
+                                    "Please analyze the math or science problem in this attached image and provide the complete step-by-step solution."
+                                }
+                                onSolve(query, attachedImageBase64)
                             },
-                            enabled = !isSolving && (problemInput.isNotBlank() || attachedImageSimulated),
+                            enabled = !isSolving && (problemInput.isNotBlank() || attachedImageBase64 != null),
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                             modifier = Modifier.testTag("btn_solve_problem")
@@ -187,13 +251,24 @@ fun ProblemSolverScreen(
                         }
                     }
 
-                    if (solverError != null) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = solverError,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                    val err = photoError ?: solverError
+                    if (err != null) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = err,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
                     }
                 }
             }
